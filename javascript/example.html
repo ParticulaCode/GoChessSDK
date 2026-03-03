@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoChess Board – Web Bluetooth Demo</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #0f3460;
+    --accent: #e94560;
+    --accent2: #533483;
+    --text: #eee;
+    --text-dim: #8899aa;
+    --success: #2ecc71;
+    --warning: #f39c12;
+    --border: #2a3a5e;
+    --radius: 8px;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  h1 {
+    text-align: center;
+    margin: 0 0 6px;
+    font-size: 1.6rem;
+    letter-spacing: 1px;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    margin: 0 0 24px;
+    font-size: 0.85rem;
+  }
+
+  /* Layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .full-width { grid-column: 1 / -1; }
+
+  /* Card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .icon { font-size: 1.2rem; }
+
+  /* Status badge */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .status-badge.disconnected { background: #4a1a2a; color: #e94560; }
+  .status-badge.connected    { background: #1a4a2a; color: #2ecc71; }
+  .status-badge .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .status-badge.disconnected .dot { background: #e94560; }
+  .status-badge.connected .dot    { background: #2ecc71; animation: pulse 2s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+  }
+
+  /* Buttons */
+  button {
+    font-family: var(--font);
+    border: none;
+    border-radius: var(--radius);
+    padding: 8px 18px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover { filter: brightness(1.15); }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+
+  .btn-primary   { background: var(--accent); color: #fff; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger    { background: #6b1a2a; color: #e94560; border: 1px solid #e94560; }
+  .btn-success   { background: #1a4a2a; color: #2ecc71; border: 1px solid #2ecc71; }
+
+  .btn-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Info grid */
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-label { color: var(--text-dim); }
+  .info-value { font-family: var(--mono); font-weight: 600; }
+
+  /* Log panel */
+  #log {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    padding: 10px;
+    height: 260px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-time  { color: #586069; }
+  .log-info  { color: #58a6ff; }
+  .log-ok    { color: #2ecc71; }
+  .log-err   { color: #e94560; }
+  .log-piece { color: #f0c040; }
+  .log-raw   { color: #586069; }
+
+  /* ── Board visual with border ── */
+  #boardVisual {
+    display: grid;
+    /*  label  borderL  8×board  borderR  */
+    grid-template-columns: 18px 0.55fr repeat(8, 1fr) 0.55fr;
+    /*  borderT  8×board  borderB  fileLabels  */
+    grid-template-rows: 0.55fr repeat(8, 1fr) 0.55fr 18px;
+    gap: 1px;
+    width: 100%;
+    max-width: 380px;
+    aspect-ratio: 1;
+    margin: 0 auto;
+  }
+  .board-rank-label, .board-file-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    font-family: var(--mono);
+  }
+  /* Board cells */
+  .board-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    border-radius: 2px;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .board-cell.light { background: #769656; }
+  .board-cell.dark  { background: #4e7837; }
+  .board-cell.occupied::after {
+    content: '\265F';
+    font-size: 1.3rem;
+    color: #222;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  .board-cell.highlight {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* Border cells */
+  .border-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+    background: #232840;
+    position: relative;
+    transition: background 0.25s;
+    font-size: 0.7rem;
+  }
+  .border-cell.occupied {
+    background: #3a4068;
+  }
+  .border-cell.occupied::after {
+    content: '';
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #c0a050;
+    box-shadow: 0 0 4px rgba(192,160,80,0.6);
+  }
+  .border-cell.highlight {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .border-cell.corner {
+    background: #1e2235;
+  }
+  .border-cell.corner.occupied {
+    background: #35384a;
+  }
+
+  /* LED controls */
+  .led-form { display: flex; flex-direction: column; gap: 10px; }
+  .form-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .form-row label {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    min-width: 70px;
+  }
+  input[type="text"], select {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    flex: 1;
+    min-width: 120px;
+  }
+  input[type="text"]:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  input[type="color"] {
+    width: 36px; height: 36px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: none;
+    cursor: pointer;
+    padding: 2px;
+  }
+  input[type="checkbox"] { accent-color: var(--accent); }
+
+  /* Special LED groups list */
+  .group-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0;
+  }
+  .group-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    font-family: var(--mono);
+  }
+  .group-item .swatch {
+    width: 16px; height: 16px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-right: 8px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .group-item button { padding: 3px 8px; font-size: 0.75rem; }
+
+  /* Quick colour buttons */
+  .color-presets {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .color-preset {
+    width: 24px; height: 24px;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    padding: 0;
+  }
+  .color-preset:hover { border-color: #fff; }
+  .color-preset.active { border-color: #fff; }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>&#9823; GoChess Board</h1>
+<p class="subtitle">Web Bluetooth Demo &nbsp;&middot;&nbsp; Requires Chrome / Edge over HTTPS or localhost</p>
+
+<div class="grid">
+
+  <!-- Connection Card -->
+  <div class="card full-width" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span id="statusBadge" class="status-badge disconnected">
+        <span class="dot"></span> Disconnected
+      </span>
+      <span id="deviceLabel" style="font-size:0.85rem; color:var(--text-dim);"></span>
+    </div>
+    <div class="btn-group">
+      <button id="btnConnect" class="btn-primary" onclick="doConnect()">Connect</button>
+      <button id="btnDisconnect" class="btn-danger" onclick="doDisconnect()" disabled>Disconnect</button>
+    </div>
+  </div>
+
+  <!-- Board Info -->
+  <div class="card">
+    <h2><span class="icon">&#8505;&#65039;</span> Board Info</h2>
+    <div id="infoPanel">
+      <div class="info-row"><span class="info-label">Firmware</span><span class="info-value" id="infoFw">&mdash;</span></div>
+      <div class="info-row"><span class="info-label">Battery</span><span class="info-value" id="infoBat">&mdash;</span></div>
+      <div class="info-row"><span class="info-label">Pieces</span><span class="info-value" id="infoPieces">&mdash;</span></div>
+      <div class="info-row"><span class="info-label">Border</span><span class="info-value" id="infoBorder">&mdash;</span></div>
+    </div>
+    <div class="btn-group" style="margin-top:12px;">
+      <button class="btn-secondary" onclick="cmdBattery()" disabled data-cmd>&#128267; Battery</button>
+      <button class="btn-secondary" onclick="cmdBoardState()" disabled data-cmd>&#128203; Board State</button>
+      <button class="btn-secondary" onclick="cmdBorderState()" disabled data-cmd>&#128230; Border State</button>
+      <button class="btn-secondary" onclick="cmdFwVersion()" disabled data-cmd>&#128295; FW Version</button>
+    </div>
+  </div>
+
+  <!-- Board Visual -->
+  <div class="card">
+    <h2><span class="icon">&#9822;</span> Board + Border</h2>
+    <div id="boardVisual"></div>
+  </div>
+
+  <!-- LED Control: Uniform -->
+  <div class="card">
+    <h2><span class="icon">&#128161;</span> LEDs &ndash; Uniform Colour (0x32)</h2>
+    <div class="led-form">
+      <div class="form-row">
+        <label>Squares</label>
+        <input type="text" id="ledSquares" placeholder="e.g. e2, e4, d4, d5">
+      </div>
+      <div class="form-row">
+        <label>Colour</label>
+        <input type="color" id="ledColor" value="#ff0000">
+        <div class="color-presets">
+          <button class="color-preset" style="background:#ff0000" title="Red"    onclick="pickColor('#ff0000')"></button>
+          <button class="color-preset" style="background:#00ff00" title="Green"  onclick="pickColor('#00ff00')"></button>
+          <button class="color-preset" style="background:#0000ff" title="Blue"   onclick="pickColor('#0000ff')"></button>
+          <button class="color-preset" style="background:#ffff00" title="Yellow" onclick="pickColor('#ffff00')"></button>
+          <button class="color-preset" style="background:#00ffff" title="Cyan"   onclick="pickColor('#00ffff')"></button>
+          <button class="color-preset" style="background:#ff00ff" title="Magenta" onclick="pickColor('#ff00ff')"></button>
+          <button class="color-preset" style="background:#ff8000" title="Orange" onclick="pickColor('#ff8000')"></button>
+          <button class="color-preset" style="background:#ffffff" title="White"  onclick="pickColor('#ffffff')"></button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Overwrite</label>
+        <input type="checkbox" id="ledOverwrite" checked>
+        <span style="font-size:0.78rem; color:var(--text-dim);">Clear other LEDs first</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn-primary" onclick="cmdSetLeds()" disabled data-cmd>Set LEDs</button>
+        <button class="btn-secondary" onclick="cmdLedsOff()" disabled data-cmd>All LEDs Off</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LED Control: Special -->
+  <div class="card">
+    <h2><span class="icon">&#127752;</span> LEDs &ndash; Multi-Colour (0x34)</h2>
+    <div class="led-form">
+      <div class="form-row">
+        <label>Squares</label>
+        <input type="text" id="specSquares" placeholder="e.g. a1, b2, c3">
+      </div>
+      <div class="form-row">
+        <label>Colour</label>
+        <input type="color" id="specColor" value="#00ff00">
+        <div class="color-presets">
+          <button class="color-preset" style="background:#ff0000" title="Red"    onclick="pickSpecColor('#ff0000')"></button>
+          <button class="color-preset" style="background:#00ff00" title="Green"  onclick="pickSpecColor('#00ff00')"></button>
+          <button class="color-preset" style="background:#0000ff" title="Blue"   onclick="pickSpecColor('#0000ff')"></button>
+          <button class="color-preset" style="background:#ffff00" title="Yellow" onclick="pickSpecColor('#ffff00')"></button>
+          <button class="color-preset" style="background:#00ffff" title="Cyan"   onclick="pickSpecColor('#00ffff')"></button>
+          <button class="color-preset" style="background:#ff00ff" title="Magenta" onclick="pickSpecColor('#ff00ff')"></button>
+          <button class="color-preset" style="background:#ff8000" title="Orange" onclick="pickSpecColor('#ff8000')"></button>
+          <button class="color-preset" style="background:#ffffff" title="White"  onclick="pickSpecColor('#ffffff')"></button>
+        </div>
+      </div>
+      <div class="form-row">
+        <button class="btn-secondary" onclick="addSpecGroup()">+ Add Group</button>
+      </div>
+      <div class="group-list" id="specGroups"></div>
+      <div class="btn-group">
+        <button class="btn-primary" onclick="cmdSetLedsSpecial()" disabled data-cmd>Send Groups</button>
+        <button class="btn-secondary" onclick="clearSpecGroups()">Clear Groups</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="card full-width">
+    <h2 style="justify-content:space-between;">
+      <span><span class="icon">&#128220;</span> Event Log</span>
+      <button class="btn-secondary" onclick="clearLog()" style="font-size:0.75rem; padding:4px 10px;">Clear</button>
+    </h2>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// Inline SDK (transpiled from gochess_sdk.ts - no build step required)
+// =====================================================================
+
+const NUS_SERVICE_UUID  = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX_CHAR_UUID  = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TX_CHAR_UUID  = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+const CMD_GET_BORDER_STATE = 0x22;
+const CMD_SET_RGB_LEDS     = 0x32;
+const CMD_LED_ON_SPECIAL   = 0x34;
+const CMD_GET_BOARD_STATE  = 0x35;
+const CMD_CHECK_BATTERY    = 0x39;
+const CMD_GET_FW_VERSION   = 0x76;
+
+const RESP_BATTERY      = 0x01;
+const RESP_BATTERY_MV   = 0x02;
+const RESP_BOARD_STATE  = 0x03;
+const RESP_CURRENT      = 0x04;
+const RESP_CHARGING     = 0x07;
+const RESP_CHAMBER      = 0x0B;
+const RESP_BORDER_STATE = 0x0C;
+const START_BYTE        = 0x2A;
+
+function squareNotationToRC(notation) {
+  if (notation.length !== 2) throw new Error("Invalid notation: " + notation);
+  const file = notation[0].toLowerCase();
+  const rank = notation[1];
+  if (file < "a" || file > "h") throw new Error("Invalid file: " + file);
+  if (rank < "1" || rank > "8") throw new Error("Invalid rank: " + rank);
+  return [parseInt(rank), file.charCodeAt(0) - "a".charCodeAt(0) + 1];
+}
+
+function rcToSquareNotation(row, col) {
+  return String.fromCharCode("a".charCodeAt(0) + col - 1) + row;
+}
+
+function buildLedMasks(squares) {
+  let mask1 = 0, mask2 = 0;
+  for (const [row, col] of squares) {
+    if (row < 1 || row > 8 || col < 1 || col > 8)
+      throw new RangeError("Square (" + row + ", " + col + ") out of range 1-8.");
+    if (row <= 4) mask1 |= 1 << ((row - 1) * 8 + (col - 1));
+    else          mask2 |= 1 << ((row - 5) * 8 + (col - 1));
+  }
+  return [mask1, mask2];
+}
+
+function writeLE32(buf, offset, val) {
+  const v = val >>> 0;
+  buf[offset]     = v & 0xFF;
+  buf[offset + 1] = (v >>> 8) & 0xFF;
+  buf[offset + 2] = (v >>> 16) & 0xFF;
+  buf[offset + 3] = (v >>> 24) & 0xFF;
+}
+
+// ── BoardState ──────────────────────────────────────────────────────────
+class BoardState {
+  constructor(raw) {
+    if (raw.length !== 8) throw new Error("Expected 8 bytes, got " + raw.length);
+    this.raw = new Uint8Array(raw);
+  }
+  isOccupied(row, col) {
+    if (row < 1 || row > 8 || col < 1 || col > 8)
+      throw new RangeError("row and col must be 1-8");
+    return (this.raw[row - 1] & (1 << (col - 1))) !== 0;
+  }
+  get pieceCount() {
+    let n = 0;
+    for (let r = 1; r <= 8; r++)
+      for (let c = 1; c <= 8; c++)
+        if (this.isOccupied(r, c)) n++;
+    return n;
+  }
+  toString() {
+    const lines = ["  a b c d e f g h"];
+    for (let r = 8; r >= 1; r--) {
+      let line = r + " ";
+      for (let c = 1; c <= 8; c++)
+        line += (this.isOccupied(r, c) ? "\u25A0" : "\u00B7") + " ";
+      lines.push(line);
+    }
+    return lines.join("\n");
+  }
+}
+
+// ── BorderState ─────────────────────────────────────────────────────────
+class BorderState {
+  constructor(raw) {
+    if (raw.length !== 6) throw new Error("Expected 6 bytes, got " + raw.length);
+    this._raw = new Uint8Array(raw);
+    this._slots = {};
+    this._parse();
+  }
+
+  _parse() {
+    const raw = this._raw;
+    const files = ["a","b","c","d","e","f","g","h"];
+    // Byte 0: Top border (rank 9) - bit N -> file[N]+"9"
+    for (let i = 0; i < 8; i++)
+      this._slots[files[i] + "9"] = !!(raw[0] & (1 << i));
+    // Byte 1: Bottom border (rank 0) - bit N -> file[N]+"0"
+    for (let i = 0; i < 8; i++)
+      this._slots[files[i] + "0"] = !!(raw[1] & (1 << i));
+    // Byte 2: Left column (file "q") - bit N -> "q"+N  (N=0..7)
+    for (let i = 0; i < 8; i++)
+      this._slots["q" + i] = !!(raw[2] & (1 << i));
+    // Byte 3: Left extension - bit 0 -> q8, bit 1 -> q9
+    this._slots["q8"] = !!(raw[3] & 0x01);
+    this._slots["q9"] = !!(raw[3] & 0x02);
+    // Byte 4: Right column (file "i") - bit N -> "i"+N  (N=0..7)
+    for (let i = 0; i < 8; i++)
+      this._slots["i" + i] = !!(raw[4] & (1 << i));
+    // Byte 5: Right extension - bit 0 -> i8, bit 1 -> i9
+    this._slots["i8"] = !!(raw[5] & 0x01);
+    this._slots["i9"] = !!(raw[5] & 0x02);
+  }
+
+  isOccupied(pos) {
+    return this._slots[pos] || false;
+  }
+
+  get slots() { return Object.assign({}, this._slots); }
+
+  get occupiedCount() {
+    return Object.values(this._slots).filter(function(v){return v;}).length;
+  }
+
+  get rawBytes() { return this._raw; }
+
+  toString() {
+    const files = ["a","b","c","d","e","f","g","h"];
+    const c = (pos) => this.isOccupied(pos) ? "\u25A0" : "\u00B7";
+    const lines = [];
+    lines.push(c("q9") + " " + files.map(f => c(f+"9")).join(" ") + " " + c("i9"));
+    for (let r = 8; r >= 1; r--)
+      lines.push(c("q"+r) + "                 " + c("i"+r));
+    lines.push(c("q0") + " " + files.map(f => c(f+"0")).join(" ") + " " + c("i0"));
+    return lines.join("\n");
+  }
+}
+
+// ── GoChessBoard ────────────────────────────────────────────────────────
+class GoChessBoard {
+  constructor() {
+    this.device = null;
+    this.server = null;
+    this.rxChar = null;
+    this.txChar = null;
+    this._connected = false;
+    this.pieceCallbacks = [];
+    this.rawCallbacks = [];
+    this.pending = new Map();
+  }
+
+  async connect(namePrefix) {
+    namePrefix = namePrefix || "GoChess";
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: namePrefix }],
+      optionalServices: [NUS_SERVICE_UUID],
+    });
+    this.device = device;
+    const server = await device.gatt.connect();
+    this.server = server;
+    const service = await server.getPrimaryService(NUS_SERVICE_UUID);
+    this.rxChar = await service.getCharacteristic(NUS_RX_CHAR_UUID);
+    this.txChar = await service.getCharacteristic(NUS_TX_CHAR_UUID);
+    await this.txChar.startNotifications();
+    this.txChar.addEventListener("characteristicvaluechanged", (e) => this._onNotify(e));
+    device.addEventListener("gattserverdisconnected", () => {
+      this._connected = false;
+      if (this._onDisconnectCb) this._onDisconnectCb();
+    });
+    this._connected = true;
+    return device.name || device.id;
+  }
+
+  async disconnect() {
+    if (this.txChar) { try { await this.txChar.stopNotifications(); } catch(e){} }
+    if (this.server && this.server.connected) this.server.disconnect();
+    this._connected = false;
+    this.device = null; this.server = null;
+    this.rxChar = null; this.txChar = null;
+    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("Disconnected")); }
+    this.pending.clear();
+  }
+
+  get isConnected() { return this._connected; }
+  get deviceName() { return this.device ? (this.device.name || "") : ""; }
+
+  onPieceMove(cb) { this.pieceCallbacks.push(cb); }
+  onRawNotification(cb) { this.rawCallbacks.push(cb); }
+  onDisconnect(cb) { this._onDisconnectCb = cb; }
+
+  async getBattery(t)    { const p=this._expect("battery",t||5000);   await this._write(new Uint8Array([CMD_CHECK_BATTERY]));   return p; }
+  async getBoardState(t) { const p=this._expect("board_state",t||5000);await this._write(new Uint8Array([CMD_GET_BOARD_STATE]));return p; }
+  async getBorderState(t){ const p=this._expect("border_state",t||5000);await this._write(new Uint8Array([CMD_GET_BORDER_STATE]));return p; }
+  async getFwVersion(t)  { const p=this._expect("fw_version",t||5000);await this._write(new Uint8Array([CMD_GET_FW_VERSION]));return p; }
+
+  async setLeds(squares, r, g, b, overwrite) {
+    r = r || 0; g = g || 0; b = b || 0;
+    if (overwrite === undefined) overwrite = true;
+    const masks = buildLedMasks(squares);
+    const data = new Uint8Array(13);
+    data[0] = CMD_SET_RGB_LEDS;
+    writeLE32(data, 1, masks[0]);
+    writeLE32(data, 5, masks[1]);
+    data[9]  = r & 0xFF;
+    data[10] = g & 0xFF;
+    data[11] = b & 0xFF;
+    data[12] = overwrite ? 0x01 : 0x00;
+    await this._write(data);
+  }
+
+  async setLedsOff() { await this.setLeds([], 0, 0, 0, true); }
+
+  async setLedsSpecial(groups) {
+    const parts = [CMD_LED_ON_SPECIAL];
+    for (const grp of groups) {
+      parts.push(grp.squares.length);
+      for (const sq of grp.squares) {
+        if (sq[0]<1||sq[0]>8||sq[1]<1||sq[1]>8) throw new RangeError("Square out of range");
+        parts.push((sq[0] << 4) | sq[1]);
+      }
+      parts.push(grp.r & 0xFF);
+      parts.push(grp.g & 0xFF);
+      parts.push(grp.b & 0xFF);
+    }
+    await this._write(new Uint8Array(parts));
+  }
+
+  async _write(data) {
+    if (!this.rxChar || !this._connected) throw new Error("Not connected");
+    await this.rxChar.writeValueWithoutResponse(data);
+  }
+
+  _expect(key, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(key); reject(new Error("Timeout: "+key)); }, timeoutMs);
+      this.pending.set(key, { resolve, reject, timer });
+    });
+  }
+
+  _resolve(key, value) {
+    const p = this.pending.get(key);
+    if (p) { this.pending.delete(key); clearTimeout(p.timer); p.resolve(value); }
+  }
+
+  _onNotify(event) {
+    const dv = event.target.value;
+    if (!dv || dv.byteLength === 0) return;
+    const data = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    for (const cb of this.rawCallbacks) { try { cb(data); } catch(e){} }
+    const first = data[0];
+
+    if (first === START_BYTE && data.length >= 5)
+      this._parseFramed(data);
+    else if (first === RESP_BOARD_STATE && data.length >= 9)
+      this._resolve("board_state", new BoardState(data.slice(1, 9)));
+    else if (first === RESP_BORDER_STATE && data.length >= 7)
+      this._resolve("border_state", new BorderState(data.slice(1, 7)));
+    else if (first === 0x56 && data.length >= 4 && data[1] === 0x65 && data[2] === 0x72)
+      this._resolve("fw_version", data[3]);
+    else if (first >= 0x31 && first <= 0x38 && data.length >= 3)
+      this._emitBoardMove(data);
+    else if ("rltb".indexOf(String.fromCharCode(first)) >= 0 && data.length >= 3)
+      this._emitBorderMove(data);
+  }
+
+  _parseFramed(data) {
+    const t = data[2];
+    if (t === RESP_BATTERY && data.length >= 4)      this._resolve("battery", data[3]);
+    else if (t === RESP_BATTERY_MV && data.length>=5) this._resolve("battery_mv",(data[3]<<8)|data[4]);
+    else if (t === RESP_CHARGING && data.length >= 4)  this._resolve("charging", data[3]!==0);
+    else if (t === RESP_CURRENT && data.length >= 5)   this._resolve("current",(data[3]<<8)|data[4]);
+    else if (t === RESP_CHAMBER && data.length >= 4)   this._resolve("chamber", data[3]!==0);
+  }
+
+  _emitBoardMove(data) {
+    this._dispatchPiece({
+      row: data[0]-0x30, col: data[1]-0x30,
+      isDown: data[2]===0x64, isBorder: false, borderSide: ""
+    });
+  }
+
+  _emitBorderMove(data) {
+    const side = String.fromCharCode(data[0]);
+    let position, isDown;
+    if (data.length >= 4 && data[1]===0x31 && data[2]===0x30) {
+      position = 10; isDown = data[3]===0x64;
+    } else {
+      position = data[1]-0x30; isDown = data[2]===0x64;
+    }
+    this._dispatchPiece({ row:0, col:position, isDown, isBorder:true, borderSide:side });
+  }
+
+  _dispatchPiece(evt) {
+    for (const cb of this.pieceCallbacks) { try { cb(evt); } catch(e){} }
+  }
+}
+
+
+// =====================================================================
+// Application state
+// =====================================================================
+
+const board = new GoChessBoard();
+let lastBoardState  = null;   // BoardState
+let lastBorderState = null;   // BorderState
+let isXR            = false;  // true if GoChess XR (Robotic) – border API only on XR
+let specGroupList   = [];     // [{squares, r, g, b}, ...]
+
+// UI refs
+const $log          = document.getElementById("log");
+const $statusBadge  = document.getElementById("statusBadge");
+const $deviceLabel  = document.getElementById("deviceLabel");
+const $infoFw       = document.getElementById("infoFw");
+const $infoBat      = document.getElementById("infoBat");
+const $infoPieces   = document.getElementById("infoPieces");
+const $infoBorder   = document.getElementById("infoBorder");
+const $boardVisual  = document.getElementById("boardVisual");
+
+// =====================================================================
+// Logging
+// =====================================================================
+
+function log(msg, cls) {
+  cls = cls || "log-info";
+  const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  const line = document.createElement("div");
+  line.innerHTML = '<span class="log-time">[' + ts + ']</span> <span class="' + cls + '">' + escHtml(msg) + '</span>';
+  $log.appendChild(line);
+  $log.scrollTop = $log.scrollHeight;
+}
+function clearLog() { $log.innerHTML = ""; }
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// =====================================================================
+// Board + Border visualisation
+// =====================================================================
+
+/*
+  Grid layout (11 cols x 12 rows):
+
+  Col:  [label] [borderL] [a] [b] [c] [d] [e] [f] [g] [h] [borderR]
+  Row 0:  ""      q9       a9  b9  c9  d9  e9  f9  g9  h9   i9       <- top border
+  Row 1:  "8"     q8       -- board cells rank 8 --           i8
+  ...
+  Row 8:  "1"     q1       -- board cells rank 1 --           i1
+  Row 9:  ""      q0       a0  b0  c0  d0  e0  f0  g0  h0   i0       <- bottom border
+  Row10:  ""      ""       a   b   c   d   e   f   g   h    ""        <- file labels
+*/
+
+const FILES = ["a","b","c","d","e","f","g","h"];
+
+function initBoardVisual() {
+  $boardVisual.innerHTML = "";
+
+  // ── Row 0: Top border ──────────────────────────────────────
+  // Label cell (empty)
+  $boardVisual.appendChild(makeLabel(""));
+  // q9 (top-left corner)
+  $boardVisual.appendChild(makeBorderCell("q9", true));
+  // a9..h9
+  for (let c = 0; c < 8; c++)
+    $boardVisual.appendChild(makeBorderCell(FILES[c] + "9", false));
+  // i9 (top-right corner)
+  $boardVisual.appendChild(makeBorderCell("i9", true));
+
+  // ── Rows 1-8: Board ranks 8 down to 1 ─────────────────────
+  for (let r = 8; r >= 1; r--) {
+    // Rank label
+    $boardVisual.appendChild(makeLabel(String(r)));
+    // Left border: q{r}
+    $boardVisual.appendChild(makeBorderCell("q" + r, false));
+    // 8 board cells
+    for (let c = 1; c <= 8; c++) {
+      const cell = document.createElement("div");
+      const isLight = (r + c) % 2 === 0;
+      cell.className = "board-cell " + (isLight ? "light" : "dark");
+      cell.id = "cell-" + r + "-" + c;
+      cell.title = rcToSquareNotation(r, c);
+      $boardVisual.appendChild(cell);
+    }
+    // Right border: i{r}
+    $boardVisual.appendChild(makeBorderCell("i" + r, false));
+  }
+
+  // ── Row 9: Bottom border ───────────────────────────────────
+  $boardVisual.appendChild(makeLabel(""));
+  // q0 (bottom-left corner)
+  $boardVisual.appendChild(makeBorderCell("q0", true));
+  // a0..h0
+  for (let c = 0; c < 8; c++)
+    $boardVisual.appendChild(makeBorderCell(FILES[c] + "0", false));
+  // i0 (bottom-right corner)
+  $boardVisual.appendChild(makeBorderCell("i0", true));
+
+  // ── Row 10: File labels ────────────────────────────────────
+  $boardVisual.appendChild(makeLabel(""));   // under rank label column
+  $boardVisual.appendChild(makeLabel(""));   // under left border column
+  for (let c = 0; c < 8; c++) {
+    const lbl = document.createElement("div");
+    lbl.className = "board-file-label";
+    lbl.textContent = FILES[c];
+    $boardVisual.appendChild(lbl);
+  }
+  $boardVisual.appendChild(makeLabel(""));   // under right border column
+}
+
+function makeLabel(text) {
+  const el = document.createElement("div");
+  el.className = "board-rank-label";
+  el.textContent = text;
+  return el;
+}
+
+function makeBorderCell(posLabel, isCorner) {
+  const el = document.createElement("div");
+  el.className = "border-cell" + (isCorner ? " corner" : "");
+  el.id = "bcell-" + posLabel;
+  el.title = posLabel;
+  return el;
+}
+
+// ── Update functions ─────────────────────────────────────────
+
+function updateBoardVisual() {
+  for (let r = 1; r <= 8; r++) {
+    for (let c = 1; c <= 8; c++) {
+      const cell = document.getElementById("cell-" + r + "-" + c);
+      if (!cell) continue;
+      if (lastBoardState && lastBoardState.isOccupied(r, c))
+        cell.classList.add("occupied");
+      else
+        cell.classList.remove("occupied");
+    }
+  }
+}
+
+function updateBorderVisual() {
+  // All 36 border position labels
+  const allPositions = [
+    "q9","a9","b9","c9","d9","e9","f9","g9","h9","i9",
+    "q8","q7","q6","q5","q4","q3","q2","q1",
+    "i8","i7","i6","i5","i4","i3","i2","i1",
+    "q0","a0","b0","c0","d0","e0","f0","g0","h0","i0"
+  ];
+  for (const pos of allPositions) {
+    const el = document.getElementById("bcell-" + pos);
+    if (!el) continue;
+    if (lastBorderState && lastBorderState.isOccupied(pos))
+      el.classList.add("occupied");
+    else
+      el.classList.remove("occupied");
+  }
+}
+
+function highlightCell(row, col, durationMs) {
+  durationMs = durationMs || 1200;
+  const cell = document.getElementById("cell-" + row + "-" + col);
+  if (!cell) return;
+  cell.classList.add("highlight");
+  setTimeout(function() { cell.classList.remove("highlight"); }, durationMs);
+}
+
+function highlightBorderCell(posLabel, durationMs) {
+  durationMs = durationMs || 1200;
+  const el = document.getElementById("bcell-" + posLabel);
+  if (!el) return;
+  el.classList.add("highlight");
+  setTimeout(function() { el.classList.remove("highlight"); }, durationMs);
+}
+
+/**
+ * Show/hide border cells and button based on whether this is a GoChess XR board.
+ * Mini and Lite boards do not have border slots.
+ */
+function applyXRState() {
+  // Border cells: visible only for XR
+  var borderCells = document.querySelectorAll(".border-cell");
+  for (var i = 0; i < borderCells.length; i++) {
+    borderCells[i].style.visibility = isXR ? "visible" : "hidden";
+  }
+}
+
+/**
+ * Map a border piece-event (side + position) to the visual cell label.
+ * Returns null if the mapping is unknown.
+ */
+function borderEventToLabel(side, position) {
+  switch (side) {
+    case "t":
+      // top border: position 1-8 -> a9..h9
+      if (position >= 1 && position <= 8) return FILES[position - 1] + "9";
+      break;
+    case "b":
+      // bottom border: position 1-8 -> a0..h0
+      if (position >= 1 && position <= 8) return FILES[position - 1] + "0";
+      break;
+    case "l":
+      // left border: firmware sends 1-indexed positions (1-10), map to q0-q9
+      if (position >= 1 && position <= 10) return "q" + (position - 1);
+      break;
+    case "r":
+      // right border: firmware sends 1-indexed positions (1-10), map to i0-i9
+      if (position >= 1 && position <= 10) return "i" + (position - 1);
+      break;
+  }
+  return null;
+}
+
+// =====================================================================
+// Connection
+// =====================================================================
+
+async function doConnect() {
+  try {
+    log("Opening Bluetooth device picker\u2026");
+    const name = await board.connect();
+    setConnected(true, name);
+    log("Connected to " + name, "log-ok");
+
+    // Register callbacks
+    board.onPieceMove(onPieceEvent);
+    board.onDisconnect(function() {
+      setConnected(false);
+      log("Board disconnected unexpectedly.", "log-err");
+    });
+
+    // Detect board type from device name (GoChessXR = Robotic, GoChessM = Mini, GoChessL = Lite)
+    isXR = (name || "").indexOf("GoChessXR") >= 0;
+
+    // Fetch initial info
+    try {
+      const fw = await board.getFwVersion();
+      const labels = { 3: "Mini / Lite", 4: "Robotic (XR)" };
+      // Also detect XR from FW version as a fallback
+      if (fw === 0x04) isXR = true;
+      $infoFw.textContent = "0x" + fw.toString(16).toUpperCase().padStart(2,"0") + " \u2013 " + (labels[fw] || "Unknown");
+      log("Firmware: 0x" + fw.toString(16).toUpperCase().padStart(2,"0") + " (" + (labels[fw]||"Unknown") + ")", "log-ok");
+    } catch (e) { log("FW version: " + e.message, "log-err"); }
+
+    // Apply XR-specific UI state
+    applyXRState();
+
+    try {
+      const bat = await board.getBattery();
+      $infoBat.textContent = bat + "%";
+      log("Battery: " + bat + "%", "log-ok");
+    } catch (e) { log("Battery: " + e.message, "log-err"); }
+
+    try {
+      const bs = await board.getBoardState();
+      lastBoardState = bs;
+      $infoPieces.textContent = bs.pieceCount;
+      updateBoardVisual();
+      log("Board state: " + bs.pieceCount + " pieces detected", "log-ok");
+    } catch (e) { log("Board state: " + e.message, "log-err"); }
+
+    // Border state is only available on GoChess XR (Robotic)
+    if (isXR) {
+      try {
+        const br = await board.getBorderState();
+        lastBorderState = br;
+        $infoBorder.textContent = br.occupiedCount + " / 36";
+        updateBorderVisual();
+        log("Border state: " + br.occupiedCount + " / 36 occupied", "log-ok");
+      } catch (e) { log("Border state: " + e.message, "log-err"); }
+    } else {
+      $infoBorder.textContent = "N/A (XR only)";
+      log("Border state: skipped (only available on GoChess XR)", "log-info");
+    }
+
+  } catch (e) {
+    log("Connection failed: " + e.message, "log-err");
+  }
+}
+
+async function doDisconnect() {
+  try {
+    await board.disconnect();
+    setConnected(false);
+    log("Disconnected.", "log-info");
+  } catch (e) {
+    log("Disconnect error: " + e.message, "log-err");
+  }
+}
+
+function setConnected(connected, name) {
+  name = name || "";
+  if (connected) {
+    $statusBadge.className = "status-badge connected";
+    $statusBadge.innerHTML = '<span class="dot"></span> Connected';
+    $deviceLabel.textContent = name;
+    document.getElementById("btnConnect").disabled = true;
+    document.getElementById("btnDisconnect").disabled = false;
+    document.querySelectorAll("[data-cmd]").forEach(function(b){b.disabled=false;});
+  } else {
+    $statusBadge.className = "status-badge disconnected";
+    $statusBadge.innerHTML = '<span class="dot"></span> Disconnected';
+    $deviceLabel.textContent = "";
+    $infoFw.textContent = "\u2014";
+    $infoBat.textContent = "\u2014";
+    $infoPieces.textContent = "\u2014";
+    $infoBorder.textContent = "\u2014";
+    document.getElementById("btnConnect").disabled = false;
+    document.getElementById("btnDisconnect").disabled = true;
+    document.querySelectorAll("[data-cmd]").forEach(function(b){b.disabled=true;});
+    lastBoardState = null;
+    lastBorderState = null;
+    isXR = false;
+    updateBoardVisual();
+    updateBorderVisual();
+    applyXRState();
+  }
+}
+
+// =====================================================================
+// Piece event handler
+// =====================================================================
+
+function onPieceEvent(evt) {
+  if (evt.isBorder) {
+    const action = evt.isDown ? "placed on" : "lifted from";
+    const label = borderEventToLabel(evt.borderSide, evt.col);
+    log("Border '" + evt.borderSide + "' slot " + evt.col + " (" + (label||"?") + "): piece " + action, "log-piece");
+
+    // Highlight border cell
+    if (label) {
+      highlightBorderCell(label);
+
+      // Update border visual if we have state
+      if (lastBorderState) {
+        lastBorderState._slots[label] = evt.isDown;
+        updateBorderVisual();
+        $infoBorder.textContent = lastBorderState.occupiedCount + " / 36";
+      }
+    }
+  } else {
+    const sq = rcToSquareNotation(evt.row, evt.col);
+    const action = evt.isDown ? "PLACED on" : "LIFTED from";
+    log("Piece " + action + " " + sq + "  (row=" + evt.row + ", col=" + evt.col + ")", "log-piece");
+    highlightCell(evt.row, evt.col);
+
+    // Update visual state if we have it
+    if (lastBoardState) {
+      if (evt.isDown)
+        lastBoardState.raw[evt.row - 1] |= (1 << (evt.col - 1));
+      else
+        lastBoardState.raw[evt.row - 1] &= ~(1 << (evt.col - 1));
+      updateBoardVisual();
+      $infoPieces.textContent = lastBoardState.pieceCount;
+    }
+  }
+}
+
+// =====================================================================
+// Command handlers
+// =====================================================================
+
+async function cmdBattery() {
+  try {
+    log("Requesting battery level\u2026");
+    const bat = await board.getBattery();
+    $infoBat.textContent = bat + "%";
+    log("Battery: " + bat + "%", "log-ok");
+  } catch (e) { log("Battery: " + e.message, "log-err"); }
+}
+
+async function cmdBoardState() {
+  try {
+    log("Requesting board state\u2026");
+    const bs = await board.getBoardState();
+    lastBoardState = bs;
+    $infoPieces.textContent = bs.pieceCount;
+    updateBoardVisual();
+    log("Board state: " + bs.pieceCount + " pieces\n" + bs.toString(), "log-ok");
+  } catch (e) { log("Board state: " + e.message, "log-err"); }
+}
+
+async function cmdBorderState() {
+  if (!isXR) {
+    log("Border state is only available on GoChess XR (Robotic). This board is Mini/Lite.", "log-err");
+    return;
+  }
+  try {
+    log("Requesting border state\u2026");
+    const br = await board.getBorderState();
+    lastBorderState = br;
+    $infoBorder.textContent = br.occupiedCount + " / 36";
+    updateBorderVisual();
+    const hex = Array.from(br.rawBytes).map(function(b){return "0x"+b.toString(16).toUpperCase().padStart(2,"0");}).join(" ");
+    log("Border state: " + br.occupiedCount + "/36 occupied  raw=[" + hex + "]\n" + br.toString(), "log-ok");
+  } catch (e) { log("Border state: " + e.message, "log-err"); }
+}
+
+async function cmdFwVersion() {
+  try {
+    log("Requesting firmware version\u2026");
+    const fw = await board.getFwVersion();
+    const labels = { 3: "Mini / Lite", 4: "Robotic (XR)" };
+    $infoFw.textContent = "0x" + fw.toString(16).toUpperCase().padStart(2,"0") + " \u2013 " + (labels[fw]||"Unknown");
+    log("Firmware: 0x" + fw.toString(16).toUpperCase().padStart(2,"0") + " (" + (labels[fw]||"Unknown") + ")", "log-ok");
+  } catch (e) { log("FW version: " + e.message, "log-err"); }
+}
+
+// =====================================================================
+// LED controls - uniform (0x32)
+// =====================================================================
+
+function parseSquaresList(text) {
+  return text.split(",")
+    .map(function(s){return s.trim().toLowerCase();})
+    .filter(function(s){return s.length > 0;})
+    .map(function(s){return squareNotationToRC(s);});
+}
+
+function hexToRgb(hex) {
+  hex = hex.replace("#", "");
+  return [
+    parseInt(hex.substring(0,2), 16),
+    parseInt(hex.substring(2,4), 16),
+    parseInt(hex.substring(4,6), 16),
+  ];
+}
+
+function rgbToHex(r, g, b) {
+  return "#" + [r,g,b].map(function(v){return v.toString(16).padStart(2,"0");}).join("");
+}
+
+function pickColor(hex) { document.getElementById("ledColor").value = hex; }
+function pickSpecColor(hex) { document.getElementById("specColor").value = hex; }
+
+async function cmdSetLeds() {
+  var raw = document.getElementById("ledSquares").value.trim();
+  if (!raw) { log("Enter at least one square (e.g. e2, e4).", "log-err"); return; }
+  try {
+    var squares = parseSquaresList(raw);
+    var rgb = hexToRgb(document.getElementById("ledColor").value);
+    var overwrite = document.getElementById("ledOverwrite").checked;
+    var labels = squares.map(function(s){return rcToSquareNotation(s[0],s[1]);});
+    log("Setting LEDs: " + labels.join(", ") + " \u2192 rgb("+rgb[0]+","+rgb[1]+","+rgb[2]+") overwrite="+overwrite);
+    await board.setLeds(squares, rgb[0], rgb[1], rgb[2], overwrite);
+    log("LEDs set.", "log-ok");
+  } catch (e) { log("LED error: " + e.message, "log-err"); }
+}
+
+async function cmdLedsOff() {
+  try {
+    log("Turning off all LEDs\u2026");
+    await board.setLedsOff();
+    log("All LEDs off.", "log-ok");
+  } catch (e) { log("LED error: " + e.message, "log-err"); }
+}
+
+// =====================================================================
+// LED controls - multi-colour groups (0x34)
+// =====================================================================
+
+function addSpecGroup() {
+  var raw = document.getElementById("specSquares").value.trim();
+  if (!raw) { log("Enter squares for this group (e.g. a1, b2).", "log-err"); return; }
+  try {
+    var squares = parseSquaresList(raw);
+    var rgb = hexToRgb(document.getElementById("specColor").value);
+    specGroupList.push({ squares: squares, r: rgb[0], g: rgb[1], b: rgb[2] });
+    document.getElementById("specSquares").value = "";
+    renderSpecGroups();
+    var labels = squares.map(function(s){return rcToSquareNotation(s[0],s[1]);});
+    log("Added group " + specGroupList.length + ": " + labels.join(", ") + " \u2192 rgb("+rgb[0]+","+rgb[1]+","+rgb[2]+")", "log-info");
+  } catch (e) { log("Group error: " + e.message, "log-err"); }
+}
+
+function removeSpecGroup(idx) { specGroupList.splice(idx, 1); renderSpecGroups(); }
+function clearSpecGroups() { specGroupList = []; renderSpecGroups(); }
+
+function renderSpecGroups() {
+  var $list = document.getElementById("specGroups");
+  if (specGroupList.length === 0) {
+    $list.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim);text-align:center;padding:8px;">No groups added yet. Add squares + colour above.</div>';
+    return;
+  }
+  $list.innerHTML = specGroupList.map(function(grp, i) {
+    var labels = grp.squares.map(function(s){return rcToSquareNotation(s[0],s[1]);}).join(", ");
+    var hex = rgbToHex(grp.r, grp.g, grp.b);
+    return '<div class="group-item">' +
+      '<span><span class="swatch" style="background:'+hex+'"></span>'+labels+' \u2192 rgb('+grp.r+','+grp.g+','+grp.b+')</span>' +
+      '<button class="btn-secondary" onclick="removeSpecGroup('+i+')">\u2715</button>' +
+      '</div>';
+  }).join("");
+}
+
+async function cmdSetLedsSpecial() {
+  if (specGroupList.length === 0) { log("Add at least one colour group first.", "log-err"); return; }
+  try {
+    log("Sending " + specGroupList.length + " colour group(s)\u2026");
+    await board.setLedsSpecial(specGroupList);
+    log("Special LEDs set.", "log-ok");
+  } catch (e) { log("LED error: " + e.message, "log-err"); }
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+
+initBoardVisual();
+applyXRState();   // hide border cells by default (shown after XR detection)
+renderSpecGroups();
+
+if (!navigator.bluetooth) {
+  log("\u26A0 Web Bluetooth is NOT supported in this browser.  Use Chrome or Edge over HTTPS / localhost.", "log-err");
+  document.getElementById("btnConnect").disabled = true;
+} else {
+  log("Ready. Click Connect to pair with a GoChess board.", "log-info");
+}
+</script>
+</body>
+</html>
